@@ -90,6 +90,15 @@ export class MusicEngine {
     this.tone.type = 'lowpass';
     this.tone.frequency.value = 16000;
     this.tone.Q.value = 0.4;
+    // gentle tape-style saturation glues the mix together
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(512);
+    for (let i = 0; i < 512; i++) {
+      const x = i / 255.5 - 1;
+      curve[i] = Math.tanh(1.5 * x) / Math.tanh(1.5);
+    }
+    shaper.curve = curve;
+    shaper.oversample = '2x';
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -20;
     comp.ratio.value = 3;
@@ -102,66 +111,116 @@ export class MusicEngine {
     limiter.ratio.value = 20;
     limiter.attack.value = 0.002;
     limiter.release.value = 0.12;
-    this.master.connect(this.tone).connect(comp).connect(limiter).connect(ctx.destination);
+    this.master.connect(this.tone).connect(shaper).connect(comp).connect(limiter).connect(ctx.destination);
 
-    // reverb
+    // reverb: long, pre-delayed, with a tail that darkens as it fades
     this.reverb = ctx.createConvolver();
-    this.reverb.buffer = this._impulse(3.4, 2.6);
+    this.reverb.buffer = this._impulse(4.2, 2.2);
     this.reverbGain = ctx.createGain();
     this.reverbGain.gain.value = 0.5;
     this.reverb.connect(this.reverbGain).connect(this.master);
 
-    // pad bus
+    // pad bus, ducked a touch on each beat so the whole bed breathes
     this.padFilter = ctx.createBiquadFilter();
     this.padFilter.type = 'lowpass';
     this.padFilter.frequency.value = 1050;
     this.padFilter.Q.value = 0.6;
+    // slow filter drift keeps long pads alive
+    this.padLfo = ctx.createOscillator();
+    this.padLfo.frequency.value = 0.06;
+    const padLfoGain = ctx.createGain();
+    padLfoGain.gain.value = 110;
+    this.padLfo.connect(padLfoGain).connect(this.padFilter.frequency);
+    this.padLfo.start();
     this.padBus = ctx.createGain();
     this.padBus.gain.value = 0.34;
+    this.duck = ctx.createGain();
     this.padFilter.connect(this.padBus);
-    this.padBus.connect(this.master);
+    this.padBus.connect(this.duck).connect(this.master);
     const padSend = ctx.createGain();
     padSend.gain.value = 0.7;
     this.padBus.connect(padSend).connect(this.reverb);
 
-    // pluck bus with dotted-eighth feedback echo
+    // pluck bus with a dotted-eighth PING-PONG echo — left, right, left…
     this.pluckBus = ctx.createGain();
     this.pluckBus.gain.value = 0.5;
-    this.delay = ctx.createDelay(2);
-    this.delay.delayTime.value = this.spb * 0.75;
-    const fb = ctx.createGain();
-    fb.gain.value = 0.34;
-    this.echoFb = fb;
-    const echoTone = ctx.createBiquadFilter();
-    echoTone.type = 'lowpass';
-    echoTone.frequency.value = 2600;
-    this.delay.connect(echoTone).connect(fb).connect(this.delay);
-    const echoOut = ctx.createGain();
-    echoOut.gain.value = 0.4;
-    this.delay.connect(echoOut).connect(this.master);
-    this.pluckBus.connect(this.delay);
     this.pluckBus.connect(this.master);
     const pluckSend = ctx.createGain();
     pluckSend.gain.value = 0.5;
     this.pluckBus.connect(pluckSend).connect(this.reverb);
+    this.delayA = ctx.createDelay(2);
+    this.delayB = ctx.createDelay(2);
+    this.delayA.delayTime.value = this.spb * 0.75;
+    this.delayB.delayTime.value = this.spb * 0.75;
+    const lpA = ctx.createBiquadFilter();
+    lpA.type = 'lowpass';
+    lpA.frequency.value = 2400;
+    const lpB = ctx.createBiquadFilter();
+    lpB.type = 'lowpass';
+    lpB.frequency.value = 1900;
+    const panA = ctx.createStereoPanner();
+    panA.pan.value = -0.55;
+    const panB = ctx.createStereoPanner();
+    panB.pan.value = 0.55;
+    const echoOut = ctx.createGain();
+    echoOut.gain.value = 0.45;
+    this.echoFb = ctx.createGain();
+    this.echoFb.gain.value = 0.45;
+    this.echoFb2 = ctx.createGain();
+    this.echoFb2.gain.value = 0.4;
+    this.delayA.connect(lpA);
+    lpA.connect(panA).connect(echoOut);
+    lpA.connect(this.echoFb).connect(this.delayB);
+    this.delayB.connect(lpB);
+    lpB.connect(panB).connect(echoOut);
+    lpB.connect(this.echoFb2).connect(this.delayA);
+    echoOut.connect(this.master);
+    const echoIn = ctx.createGain();
+    echoIn.gain.value = 0.55;
+    this.pluckBus.connect(echoIn).connect(this.delayA);
 
     // bass bus
     this.bassBus = ctx.createGain();
     this.bassBus.gain.value = 0.4;
     this.bassBus.connect(this.master);
 
-    // lead bus: e-piano / bells / flute / MIDI melodies, with a wash of reverb
+    // lead bus: e-piano / bells / flute / MIDI melodies — dry voice plus a
+    // two-voice modulated chorus spread wide, and a wash of reverb
     this.leadBus = ctx.createGain();
     this.leadBus.gain.value = 0.5;
-    this.leadBus.connect(this.master);
+    const leadDry = ctx.createGain();
+    leadDry.gain.value = 0.78;
+    this.leadBus.connect(leadDry).connect(this.master);
+    for (const [base, rate, depth, pan] of [[0.013, 0.31, 0.0024, -0.6], [0.021, 0.23, 0.0031, 0.6]]) {
+      const dl = ctx.createDelay(0.1);
+      dl.delayTime.value = base;
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = rate;
+      const lg = ctx.createGain();
+      lg.gain.value = depth;
+      lfo.connect(lg).connect(dl.delayTime);
+      lfo.start();
+      const pn = ctx.createStereoPanner();
+      pn.pan.value = pan;
+      const cg = ctx.createGain();
+      cg.gain.value = 0.4;
+      this.leadBus.connect(dl).connect(pn).connect(cg).connect(this.master);
+    }
     const leadSend = ctx.createGain();
     leadSend.gain.value = 0.6;
     this.leadBus.connect(leadSend).connect(this.reverb);
+    const leadEcho = ctx.createGain();
+    leadEcho.gain.value = 0.22;
+    this.leadBus.connect(leadEcho).connect(this.delayA);
 
     // percussion bus, barely there
     this.percBus = ctx.createGain();
     this.percBus.gain.value = 0.6;
     this.percBus.connect(this.master);
+
+    // round-robin stereo placement for melody notes
+    this._panSeq = [-0.32, 0.18, 0.38, -0.14, 0.05, -0.42, 0.28];
+    this._panIdx = 0;
 
     this._atmosphere();
 
@@ -276,7 +335,9 @@ export class MusicEngine {
     if (Math.abs(bpm - this.tempo) < 0.5) return;
     this.tempo = bpm;
     this.spb = 60 / bpm;
-    this.delay.delayTime.setTargetAtTime(this.spb * 0.75, this.ctx.currentTime, 0.8);
+    const t = this.ctx.currentTime;
+    this.delayA.delayTime.setTargetAtTime(this.spb * 0.75, t, 0.8);
+    this.delayB.delayTime.setTargetAtTime(this.spb * 0.75, t, 0.8);
   }
 
   _applyTrack(idx) {
@@ -333,6 +394,7 @@ export class MusicEngine {
     this.tone.frequency.setTargetAtTime(13500 - Math.min(1, muffle) * 11000, t, 1.5);
     this.reverbGain.gain.setTargetAtTime(this.track.rev + snow * 0.35 + rain * 0.15, t, 2);
     this.echoFb.gain.setTargetAtTime(this.track.echo + rain * 0.14, t, 2);
+    this.echoFb2.gain.setTargetAtTime((this.track.echo + rain * 0.14) * 0.85, t, 2);
     this.bassBus.gain.setTargetAtTime(this.track.bassGain + storm * 0.12, t, 2);
     this.rainGain.gain.setTargetAtTime(Math.min(1, rain) * 0.05, t, 1.2);
     this.windGain.gain.setTargetAtTime(0.018 + wind * 0.05, t, 1.5);
@@ -454,6 +516,11 @@ export class MusicEngine {
     }
     if (beatInChord % 4 === 0) this._bass(chord.bass, t, this.spb * 3.6);
 
+    // a breath of sidechain: the pads dip a touch on every beat and swell
+    // back — the bed pulses with the same heartbeat that sways the flowers
+    this.duck.gain.setValueAtTime(0.86, t);
+    this.duck.gain.setTargetAtTime(1, t + 0.03, 0.11);
+
     // a whisper of percussion where the track calls for it
     if (this.track.perc >= 1) {
       for (let half = 0; half < 2; half++) {
@@ -495,37 +562,58 @@ export class MusicEngine {
     }
   }
 
-  // lead voice dispatch — every track sings with its own instrument
+  // lead voice dispatch — every track sings with its own instrument.
+  // Notes are humanized (micro-timing and velocity) and walk around the
+  // stereo field instead of stacking dead center: that's what makes the
+  // difference between "a MIDI file" and a performance.
   _lead(kind, freq, t, vel, dur) {
-    if (kind === 'epiano') this._epiano(freq, t, vel, dur);
-    else if (kind === 'soft') this._epiano(freq, t, vel, dur, true);
-    else if (kind === 'bell') this._bell(freq, t, vel);
-    else if (kind === 'flute') this._flute(freq, t, vel, Math.max(dur, this.spb * 1.6));
-    else this._pluck(freq, t, vel);
+    t += (Math.random() - 0.5) * 0.013;
+    vel *= 0.86 + Math.random() * 0.28;
+    this._panIdx = (this._panIdx + 1) % this._panSeq.length;
+    const pan = this.ctx.createStereoPanner();
+    pan.pan.value = this._panSeq[this._panIdx];
+    if (kind === 'epiano') { pan.connect(this.leadBus); this._epiano(freq, t, vel, dur, false, pan); }
+    else if (kind === 'soft') { pan.connect(this.leadBus); this._epiano(freq, t, vel, dur, true, pan); }
+    else if (kind === 'bell') { pan.connect(this.leadBus); this._bell(freq, t, vel, pan); }
+    else if (kind === 'flute') { pan.connect(this.leadBus); this._flute(freq, t, vel, Math.max(dur, this.spb * 1.6), pan); }
+    else { pan.connect(this.pluckBus); this._pluck(freq, t, vel, pan); }
   }
 
   // FM e-piano: sine carrier, 2:1 modulator whose index decays — soft tine.
-  // In soft mode the tine almost disappears: slow attack, barely any FM —
-  // the voice MIDI covers float in on.
-  _epiano(freq, t, vel, dur = 0.9, soft = false) {
+  // Velocity drives brightness (harder notes ring brighter, like a real
+  // tine), long notes get a delayed vibrato, soft mode rounds it all off.
+  _epiano(freq, t, vel, dur = 0.9, soft = false, out = this.leadBus) {
     const ctx = this.ctx;
     const carrier = ctx.createOscillator();
     carrier.type = 'sine';
     carrier.frequency.value = freq;
+    carrier.detune.value = (Math.random() - 0.5) * 5;
     const mod = ctx.createOscillator();
     mod.type = 'sine';
     mod.frequency.value = freq * 2;
+    const brightness = soft ? 0.55 + vel * 5 : 1.1 + vel * 7;
     const modGain = ctx.createGain();
-    modGain.gain.setValueAtTime(freq * (soft ? 0.9 : 1.6), t);
+    modGain.gain.setValueAtTime(freq * brightness, t);
     modGain.gain.setTargetAtTime(freq * 0.05, t + 0.01, soft ? 0.26 : 0.18);
     mod.connect(modGain).connect(carrier.frequency);
+    if (dur > 0.7) {
+      // delayed vibrato — the note starts straight, then starts to sing
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 4.8;
+      const vg = ctx.createGain();
+      vg.gain.setValueAtTime(0, t);
+      vg.gain.linearRampToValueAtTime(6, t + 0.55);
+      lfo.connect(vg).connect(carrier.detune);
+      lfo.start(t);
+      lfo.stop(t + dur + 2);
+    }
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, t);
     // a clear (but not clicky) onset — articulation carries the tune
     g.gain.linearRampToValueAtTime(vel, t + (soft ? 0.022 : 0.008));
     g.gain.setTargetAtTime(vel * (soft ? 0.55 : 0.35), t + 0.08, soft ? 0.5 : 0.3);
     g.gain.setTargetAtTime(0, t + dur, soft ? 0.35 : 0.18);
-    carrier.connect(g).connect(this.leadBus);
+    carrier.connect(g).connect(out);
     carrier.start(t);
     mod.start(t);
     carrier.stop(t + dur + 2);
@@ -533,7 +621,7 @@ export class MusicEngine {
   }
 
   // small glass bell: fundamental plus inharmonic partials, long shimmer
-  _bell(freq, t, vel) {
+  _bell(freq, t, vel, out = this.leadBus) {
     const ctx = this.ctx;
     for (const [ratio, amp, dec] of [[1, 1, 1.4], [2.76, 0.4, 0.6], [5.4, 0.18, 0.3]]) {
       const osc = ctx.createOscillator();
@@ -543,14 +631,14 @@ export class MusicEngine {
       g.gain.setValueAtTime(0, t);
       g.gain.linearRampToValueAtTime(vel * amp * 0.7, t + 0.006);
       g.gain.setTargetAtTime(0, t + 0.02, dec);
-      osc.connect(g).connect(this.leadBus);
+      osc.connect(g).connect(out);
       osc.start(t);
       osc.stop(t + dec * 6);
     }
   }
 
   // breathy flute: filtered triangle with slow attack and gentle vibrato
-  _flute(freq, t, vel, dur) {
+  _flute(freq, t, vel, dur, out = this.leadBus) {
     const ctx = this.ctx;
     const osc = ctx.createOscillator();
     osc.type = 'triangle';
@@ -568,7 +656,7 @@ export class MusicEngine {
     g.gain.linearRampToValueAtTime(vel * 0.9, t + 0.09);
     g.gain.setValueAtTime(vel * 0.9, t + Math.max(0.1, dur - 0.1));
     g.gain.setTargetAtTime(0, t + dur, 0.12);
-    osc.connect(lp).connect(g).connect(this.leadBus);
+    osc.connect(lp).connect(g).connect(out);
     osc.start(t);
     vib.start(t);
     osc.stop(t + dur + 1);
@@ -607,47 +695,70 @@ export class MusicEngine {
   }
 
   _pad(notes, t, dur) {
+    // detuned saw pair spread hard left/right — a wide, breathing ensemble
     for (const m of notes) {
-      for (const det of [-5, 4]) {
+      for (const [det, pan] of [[-6, -0.5], [5, 0.5]]) {
         const osc = this.ctx.createOscillator();
         osc.type = 'sawtooth';
         osc.frequency.value = midiHz(m);
-        osc.detune.value = det;
+        osc.detune.value = det + (Math.random() - 0.5) * 3;
         const g = this.ctx.createGain();
         g.gain.setValueAtTime(0, t);
-        g.gain.linearRampToValueAtTime(0.045, t + 1.4);
-        g.gain.setValueAtTime(0.045, t + dur - 0.4);
+        g.gain.linearRampToValueAtTime(0.042, t + 1.4);
+        g.gain.setValueAtTime(0.042, t + dur - 0.4);
         g.gain.linearRampToValueAtTime(0, t + dur + 2.2);
-        osc.connect(g).connect(this.padFilter);
+        const pn = this.ctx.createStereoPanner();
+        pn.pan.value = pan;
+        osc.connect(g).connect(pn).connect(this.padFilter);
         osc.start(t);
         osc.stop(t + dur + 2.4);
       }
     }
+    // soft triangle sub an octave under the root anchors the chord
+    const sub = this.ctx.createOscillator();
+    sub.type = 'triangle';
+    sub.frequency.value = midiHz(notes[0] - 12);
+    const sg = this.ctx.createGain();
+    sg.gain.setValueAtTime(0, t);
+    sg.gain.linearRampToValueAtTime(0.05, t + 1.8);
+    sg.gain.setValueAtTime(0.05, t + dur - 0.4);
+    sg.gain.linearRampToValueAtTime(0, t + dur + 2);
+    sub.connect(sg).connect(this.padFilter);
+    sub.start(t);
+    sub.stop(t + dur + 2.2);
   }
 
   _bass(m, t, dur) {
-    const osc = this.ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = midiHz(m - 12);
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.22, t + 0.06);
-    g.gain.setTargetAtTime(0.12, t + 0.3, 0.5);
-    g.gain.setTargetAtTime(0, t + dur, 0.2);
-    osc.connect(g).connect(this.bassBus);
-    osc.start(t);
-    osc.stop(t + dur + 1);
+    // sine fundamental plus a quiet rounded-off triangle octave for warmth
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 340;
+    lp.connect(this.bassBus);
+    for (const [type, mm, amp] of [['sine', m - 12, 0.22], ['triangle', m, 0.06]]) {
+      const osc = this.ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = midiHz(mm);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(amp, t + 0.06);
+      g.gain.setTargetAtTime(amp * 0.55, t + 0.3, 0.5);
+      g.gain.setTargetAtTime(0, t + dur, 0.2);
+      osc.connect(g).connect(lp);
+      osc.start(t);
+      osc.stop(t + dur + 1);
+    }
   }
 
-  _pluck(freq, t, vel) {
+  _pluck(freq, t, vel, out = this.pluckBus) {
     const osc = this.ctx.createOscillator();
     osc.type = this.track.pluckType;
     osc.frequency.value = freq;
+    osc.detune.value = (Math.random() - 0.5) * 4;
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(vel, t + 0.006);
     g.gain.setTargetAtTime(0, t + 0.03, 0.16);
-    osc.connect(g).connect(this.pluckBus);
+    osc.connect(g).connect(out);
     osc.start(t);
     osc.stop(t + 1.4);
   }
@@ -659,13 +770,16 @@ export class MusicEngine {
     osc.frequency.value = midiHz(m);
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.035, t + 0.02);
+    g.gain.linearRampToValueAtTime(0.032, t + 0.02);
     g.gain.setTargetAtTime(0, t + 0.1, 0.9);
+    // sparkles drift far out in the stereo field
+    const pn = this.ctx.createStereoPanner();
+    pn.pan.value = (Math.random() - 0.5) * 1.5;
     const send = this.ctx.createGain();
     send.gain.value = 1.6;
-    osc.connect(g);
-    g.connect(this.master);
-    g.connect(send).connect(this.reverb);
+    osc.connect(g).connect(pn);
+    pn.connect(this.master);
+    pn.connect(send).connect(this.reverb);
     osc.start(t);
     osc.stop(t + 4);
   }
@@ -759,13 +873,23 @@ export class MusicEngine {
     return buf;
   }
 
+  // reverb impulse with a short pre-delay and a tail that darkens over time
+  // (a one-pole lowpass whose smoothing tightens toward the end) — the
+  // difference between a noise burst and a room
   _impulse(seconds, decay) {
-    const len = Math.floor(this.ctx.sampleRate * seconds);
-    const buf = this.ctx.createBuffer(2, len, this.ctx.sampleRate);
+    const sr = this.ctx.sampleRate;
+    const len = Math.floor(sr * seconds);
+    const pre = Math.floor(sr * 0.02);
+    const buf = this.ctx.createBuffer(2, len, sr);
     for (let ch = 0; ch < 2; ch++) {
       const d = buf.getChannelData(ch);
-      for (let i = 0; i < len; i++) {
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      let lp = 0;
+      for (let i = pre; i < len; i++) {
+        const k = (i - pre) / (len - pre);
+        const a = 0.15 + 0.8 * k; // more smoothing (darker) as the tail fades
+        const x = (Math.random() * 2 - 1) * Math.pow(1 - k, decay);
+        lp = lp * a + x * (1 - a);
+        d[i] = lp * 2.4;
       }
     }
     return buf;
