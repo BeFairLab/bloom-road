@@ -266,9 +266,10 @@ export class World {
       this.lampGlowGeo, this.puddleGeo, this.driftGeo,
     ]);
 
-    // the last column is a skirt: it folds the terrain silhouette down below
-    // the horizon so the open mesh edge never hangs in the sky as a cliff
-    this.groundOffsets = [4.6, 6, 9, 14, 22, 34, 52, 80, 120, 170, 230, 300, 380];
+    // the outer columns slope the terrain away into a far valley: the mesh
+    // edge never hangs in the sky, and (unlike a vertical fold) the descent
+    // reads as a natural hillside even when a curve swings it close
+    this.groundOffsets = [4.6, 6, 9, 14, 22, 34, 52, 80, 120, 170, 230, 300, 360, 440, 540];
   }
 
   // ---- road shape, gated by landscape: downtown straightens and flattens ----
@@ -482,10 +483,17 @@ export class World {
     const roadGeo = this._ribbon(i0, i1, [-ROAD_HALF, 0, ROAD_HALF], (s) => this.roadYAt(s) + 0.02, roadColor, false);
     group.add(new THREE.Mesh(roadGeo, this.roadMat));
 
-    // ground on both sides (faceted for the low-poly look); beyond 320 m the
-    // skirt drops sharply so the outer edge hides below the horizon line
-    const hFn = (s, d) =>
-      Math.abs(d) > 320 ? this.roadYAt(s) - 60 : this.terrainH(s, d, this.env.weightsAt(s));
+    // ground on both sides (faceted for the low-poly look); past 300 m the
+    // hills ease down into a distant valley so the outer edge sits below the
+    // horizon without ever forming a cliff wall
+    const hFn = (s, d) => {
+      const ad = Math.abs(d);
+      const w = this.env.weightsAt(s);
+      if (ad <= 300) return this.terrainH(s, d, w);
+      const edge = this.terrainH(s, Math.sign(d) * 300, w);
+      const k = smoothstep(300, 540, ad);
+      return edge * (1 - k) + (this.roadYAt(s) - 45) * k;
+    };
     const cFn = (s, d, h) => this.groundColor(s, d, h, this.env.weightsAt(s));
     for (const sign of [-1, 1]) {
       const offsets = this.groundOffsets.map((d) => d * sign).sort((a, b) => a - b);

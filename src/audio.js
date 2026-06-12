@@ -68,7 +68,7 @@ export const TRACKS = [
 // breathing as usual (the melody is transposed into its diatonic world), and
 // the song floats over it as a quiet half-tempo line — a light ambient cover
 const MIDI_PRESET = {
-  name: 'MIDI', tempoMul: 0.9, lead: 'soft', pluckType: 'sine', pluckOct: 0, comp: false, perc: 0,
+  name: 'MIDI', tempoMul: 1, lead: 'soft', pluckType: 'sine', pluckOct: 0, comp: false, perc: 0,
   padGain: 0.29, pluckGain: 0.5, bassGain: 0.4, filter: 980, rest: 0.7, sparkle: 0.05, rev: 0.62, echo: 0.38,
 };
 
@@ -477,7 +477,7 @@ export class MusicEngine {
       if (bucket) {
         for (const n of bucket) {
           const when = t + (n.beat - lb) * this.spb;
-          this._lead(this.track.lead, midiHz(n.midi), when, 0.032 + n.vel * 0.042, Math.min(4, Math.max(0.4, n.durBeats * this.spb)));
+          this._lead(this.track.lead, midiHz(n.midi), when, 0.04 + n.vel * 0.05, Math.min(4, Math.max(0.3, n.durBeats * this.spb)));
         }
       }
     }
@@ -516,12 +516,13 @@ export class MusicEngine {
     mod.type = 'sine';
     mod.frequency.value = freq * 2;
     const modGain = ctx.createGain();
-    modGain.gain.setValueAtTime(freq * (soft ? 0.75 : 1.6), t);
-    modGain.gain.setTargetAtTime(freq * 0.05, t + 0.01, soft ? 0.3 : 0.18);
+    modGain.gain.setValueAtTime(freq * (soft ? 0.9 : 1.6), t);
+    modGain.gain.setTargetAtTime(freq * 0.05, t + 0.01, soft ? 0.26 : 0.18);
     mod.connect(modGain).connect(carrier.frequency);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vel, t + (soft ? 0.06 : 0.008));
+    // a clear (but not clicky) onset — articulation carries the tune
+    g.gain.linearRampToValueAtTime(vel, t + (soft ? 0.022 : 0.008));
     g.gain.setTargetAtTime(vel * (soft ? 0.55 : 0.35), t + 0.08, soft ? 0.5 : 0.3);
     g.gain.setTargetAtTime(0, t + dur, soft ? 0.35 : 0.18);
     carrier.connect(g).connect(this.leadBus);

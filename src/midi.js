@@ -128,11 +128,9 @@ function pickLead(parsed) {
 
 // Build a beat-space loop ready for the music engine, reshaped into a light
 // ambient cover: the melody is transposed into the bed's own diatonic world
-// (the chord sets all live in C major / A minor), stretched to half tempo so
-// phrases become long breaths, and thinned so only the singing notes remain.
-const STRETCH = 2;
-
-export function makeLoop(parsed, maxBeats = 72) {
+// (the chord sets all live in C major / A minor) and lightly thinned — but it
+// keeps its original phrasing and pace, so the tune stays recognizable.
+export function makeLoop(parsed, maxBeats = 96) {
   const lead = pickLead(parsed);
   if (!lead) return null;
   const key = estimateKey(lead);
@@ -142,16 +140,15 @@ export function makeLoop(parsed, maxBeats = 72) {
   const t0 = Math.min(...lead.map((n) => n.start));
   const all = lead
     .map((n) => ({
-      beat: ((n.start - t0) / div) * STRETCH,
-      durBeats: Math.min(8, (n.dur / div) * STRETCH),
+      beat: (n.start - t0) / div,
+      durBeats: Math.min(6, n.dur / div),
       midi: n.midi + transpose,
       vel: n.vel,
     }))
-    .filter((n) => n.beat < maxBeats * STRETCH)
+    .filter((n) => n.beat < maxBeats)
     .sort((a, b) => a.beat - b.beat);
-  // prefer the singing notes; if the file plays everything quietly, relax
-  let notes = all.filter((n) => n.durBeats >= 0.3 && n.vel > 0.18);
-  if (notes.length < 16) notes = all.filter((n) => n.durBeats >= 0.15);
+  // drop only the dust — grace notes and near-silent ticks; hooks survive
+  let notes = all.filter((n) => n.durBeats >= 0.15 && n.vel > 0.12);
   if (notes.length < 16) notes = all;
   if (notes.length < 16) return null;
 
@@ -160,16 +157,16 @@ export function makeLoop(parsed, maxBeats = 72) {
   const octShift = Math.round((70 - avg) / 12) * 12;
   if (octShift) notes = notes.map((n) => ({ ...n, midi: n.midi + octShift }));
 
-  // bucket per integer beat with low polyphony — an unhurried, airy line
+  // bucket per integer beat with modest polyphony — airy but articulate
   const buckets = new Map();
   for (const n of notes) {
     const b = Math.floor(n.beat);
     if (!buckets.has(b)) buckets.set(b, []);
     const arr = buckets.get(b);
     arr.push(n);
-    if (arr.length > 2) {
+    if (arr.length > 3) {
       arr.sort((x, y) => y.vel - x.vel);
-      arr.length = 2;
+      arr.length = 3;
     }
   }
   const last = notes[notes.length - 1];
