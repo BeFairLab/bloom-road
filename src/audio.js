@@ -69,7 +69,7 @@ export const TRACKS = [
 // the song floats over it as a quiet half-tempo line — a light ambient cover
 const MIDI_PRESET = {
   name: 'MIDI', tempoMul: 0.9, lead: 'soft', pluckType: 'sine', pluckOct: 0, comp: false, perc: 0,
-  padGain: 0.32, pluckGain: 0.5, bassGain: 0.4, filter: 980, rest: 0.7, sparkle: 0.05, rev: 0.62, echo: 0.38,
+  padGain: 0.29, pluckGain: 0.5, bassGain: 0.4, filter: 980, rest: 0.7, sparkle: 0.05, rev: 0.62, echo: 0.38,
 };
 
 const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
@@ -445,7 +445,7 @@ export class MusicEngine {
       if (bucket) {
         for (const n of bucket) {
           const when = t + (n.beat - lb) * this.spb;
-          this._lead(this.track.lead, midiHz(n.midi), when, 0.02 + n.vel * 0.028, Math.min(4, Math.max(0.4, n.durBeats * this.spb)));
+          this._lead(this.track.lead, midiHz(n.midi), when, 0.032 + n.vel * 0.042, Math.min(4, Math.max(0.4, n.durBeats * this.spb)));
         }
       }
     }
@@ -484,7 +484,7 @@ export class MusicEngine {
     mod.type = 'sine';
     mod.frequency.value = freq * 2;
     const modGain = ctx.createGain();
-    modGain.gain.setValueAtTime(freq * (soft ? 0.55 : 1.6), t);
+    modGain.gain.setValueAtTime(freq * (soft ? 0.75 : 1.6), t);
     modGain.gain.setTargetAtTime(freq * 0.05, t + 0.01, soft ? 0.3 : 0.18);
     mod.connect(modGain).connect(carrier.frequency);
     const g = ctx.createGain();
