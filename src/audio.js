@@ -188,16 +188,48 @@ export class MusicEngine {
 
   start() {
     this.ctx.resume();
+    this._unlockIOS();
     this.nextBeat = this.ctx.currentTime + 0.2;
     this.timer = setInterval(() => this._schedule(), 40);
+    // iOS suspends the context on lock/interruption — revive it on any touch
+    const revive = () => {
+      if (this.ctx.state !== 'running') this.ctx.resume();
+    };
+    window.addEventListener('pointerdown', revive, { passive: true });
+    window.addEventListener('touchend', revive, { passive: true });
     // background tabs throttle the scheduler — duck the music instead of stuttering
     document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && this.ctx.state !== 'running') this.ctx.resume();
       if (this.muted) return;
       const t = this.ctx.currentTime;
       this.master.gain.cancelScheduledValues(t);
       this.master.gain.setTargetAtTime(document.hidden ? 0 : this.volume, t, 0.2);
       if (!document.hidden) this.nextBeat = Math.max(this.nextBeat, this.ctx.currentTime + 0.2);
     });
+  }
+
+  // iOS routes Web Audio through the ringer channel, so the silent switch
+  // kills it. Looping a (silent) media element in the same user gesture flips
+  // the audio session to "playback", which ignores the switch.
+  _unlockIOS() {
+    try {
+      const rate = 8000;
+      const samples = rate / 10;
+      const buf = new ArrayBuffer(44 + samples * 2);
+      const v = new DataView(buf);
+      const w = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + samples * 2, true); w(8, 'WAVEfmt ');
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true);
+      v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+      w(36, 'data'); v.setUint32(40, samples * 2, true);
+      const el = document.createElement('audio');
+      el.src = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+      el.loop = true;
+      el.setAttribute('playsinline', '');
+      el.play().catch(() => {});
+      this._silentLoop = el; // keep alive
+    } catch { /* best effort */ }
   }
 
   toggleMute() {

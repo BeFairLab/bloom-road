@@ -209,8 +209,18 @@ async function init() {
 
     // speed follows the cruise knob; breathes a little while driving
     const cruise = SPEED_LEVELS[env.speedIdx].v;
-    const targetSpeed = driving ? cruise * (1 + Math.sin(t * 0.05) * 0.08) : 0;
-    speed = THREE.MathUtils.lerp(speed, targetSpeed, 1 - Math.exp(-dt * 0.5));
+    let targetSpeed = driving ? cruise * (1 + Math.sin(t * 0.05) * 0.08) : 0;
+    // never drive through the car ahead — the check is lane-aware, so it
+    // releases by itself once we've pulled out far enough to pass; the
+    // engage distance scales with closing speed so braking starts in time
+    if (driving) {
+      const block = traffic.nearestAhead(carS, lateral, 50);
+      if (block && block.speed < speed && block.gap < 12 + (speed - block.speed) * 1.3) {
+        targetSpeed = Math.min(targetSpeed, Math.max(2, block.speed * 0.95));
+      }
+    }
+    // brake quicker than we accelerate
+    speed = THREE.MathUtils.lerp(speed, targetSpeed, 1 - Math.exp(-dt * (targetSpeed < speed ? 1.8 : 0.5)));
     carS += speed * dt;
 
     // steering
@@ -224,7 +234,9 @@ async function init() {
     if (driving && !manual) {
       if (!overtake.phase) {
         const ahead = traffic.nearestAhead(carS, lateral, 30);
-        if (ahead && ahead.speed < speed * 0.92 && speed > 6 && traffic.oncomingClear(carS, carS + 150)) {
+        // compare against the cruise setting — current speed may already be
+        // capped behind this very car, which would mask the wish to pass
+        if (ahead && ahead.speed < cruise * 0.92 && speed > 6 && traffic.oncomingClear(carS, carS + 150)) {
           overtake = { phase: 'signal', t: 0.85, blink: 'L', target: ahead.car };
         }
       } else if (overtake.phase === 'signal') {
@@ -233,7 +245,9 @@ async function init() {
       } else if (overtake.phase === 'out') {
         // glide out: cap the sideways speed so the car leans over gently
         lateralTarget += THREE.MathUtils.clamp(-2.1 - lateralTarget, -dt * 1.3, dt * 1.3);
-        if (!traffic.cars.includes(overtake.target) || carS > overtake.target.s + 13) {
+        // duck back in early if the oncoming lane stops being empty
+        const oncBusy = !traffic.oncomingClear(carS, carS + 120);
+        if (oncBusy || !traffic.cars.includes(overtake.target) || carS > overtake.target.s + 13) {
           overtake.phase = 'back';
           overtake.blink = 'R';
           overtake.t = 1.0;

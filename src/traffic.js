@@ -131,7 +131,7 @@ export class Traffic {
       if (c.dir < 0) continue;
       const gap = c.s - carS;
       if (gap <= 2 || gap > range) continue;
-      if (Math.abs(c.lane - playerLane) > 1.7) continue;
+      if (Math.abs(c.lane - playerLane) > 2.4) continue;
       if (!best || gap < best.gap) best = { car: c, gap, speed: c.speed };
     }
     return best;
@@ -144,11 +144,13 @@ export class Traffic {
     return !this.cars.some((c) => c.dir < 0 && c.s > lo && c.s < hi);
   }
 
-  // nearest leader (player or traffic) ahead of the given car in its lane
+  // nearest leader (player or traffic) ahead of the given car in its lane.
+  // The window is wider than a car so the speed clamp keeps holding through
+  // most of a pull-out — release only once genuinely clear sideways.
   _leaderFor(car, carS, playerLane, playerSpeed) {
     let best = null;
     const consider = (s, lane, speed) => {
-      if (Math.abs(car.lane - lane) > 1.7) return;
+      if (Math.abs(car.lane - lane) > 2.6) return;
       const gap = s - car.s;
       if (gap <= 0.5 || gap > 50) return;
       if (!best || gap < best.gap) best = { s, gap, speed };
@@ -181,7 +183,9 @@ export class Traffic {
       if (car.dir < 0 && (car.s < carS - 140 || car.s < 10)) { this._despawn(car); continue; }
 
       if (car.dir > 0) {
-        const leader = car.state === 'cruise' ? this._leaderFor(car, carS, playerLane, playerSpeed) : null;
+        // the leader check is lane-aware, so it releases by itself once the
+        // car has pulled far enough sideways during a pass
+        const leader = this._leaderFor(car, carS, playerLane, playerSpeed);
 
         // closing in on someone slower: overtake if the left lane is free,
         // otherwise settle in behind and match their speed — never intersect
@@ -193,23 +197,28 @@ export class Traffic {
           }
         }
         let speedTarget = car.baseSpeed;
-        if (car.state === 'cruise' && leader && leader.gap < 16 && car.baseSpeed > leader.speed) {
-          speedTarget = Math.max(2, leader.speed * 0.95);
+        if (leader && car.speed > leader.speed) {
+          // engage early enough to bleed off the closing speed: braking
+          // distance scales with how fast we're gaining on the leader
+          const closing = car.speed - leader.speed;
+          if (leader.gap < 10 + closing * 1.4) speedTarget = Math.max(2, leader.speed * 0.95);
         }
-        car.speed += (speedTarget - car.speed) * (1 - Math.exp(-dt * 1.2));
+        car.speed += (speedTarget - car.speed) * (1 - Math.exp(-dt * (speedTarget < car.speed ? 2.2 : 1.2)));
 
         if (car.state === 'signal') {
           car.stateT -= dt;
           if (car.stateT <= 0) { car.state = 'pass'; car.targetLane = -LANE; }
         } else if (car.state === 'pass') {
-          // done passing once nobody in the right lane is alongside anymore
+          // abort the pass early if someone shows up in the oncoming lane
+          const oncNear = this.cars.some((o) => o.dir < 0 && o.s > car.s - 30 && o.s < car.s + 110);
+          // otherwise done once nobody in the right lane is alongside anymore
           let alongside = false;
           if (Math.abs(playerLane - LANE) < 1.7 && Math.abs(carS - car.s) < 18) alongside = true;
           for (const o of this.cars) {
             if (o === car || o.dir < 0) continue;
             if (Math.abs(o.lane - LANE) < 1.7 && o.s > car.s - 24 && o.s < car.s + 16) alongside = true;
           }
-          if (!alongside) {
+          if (oncNear || !alongside) {
             car.state = 'back';
             car.targetLane = LANE;
             car.blink = 'R';
@@ -218,6 +227,16 @@ export class Traffic {
           car.state = 'cruise';
           car.blink = null;
         }
+      } else {
+        // oncoming cars keep their own spacing: ease off behind a slower one
+        let leader = null;
+        for (const o of this.cars) {
+          if (o === car || o.dir > 0) continue;
+          const gap = car.s - o.s; // o is ahead in this car's direction of travel
+          if (gap > 0.5 && gap < 18 && (!leader || gap < leader.gap)) leader = { gap, speed: o.speed };
+        }
+        const st = leader ? Math.min(car.baseSpeed, leader.speed * 0.95) : car.baseSpeed;
+        car.speed += (st - car.speed) * (1 - Math.exp(-dt * 1.4));
       }
       // ease toward the target lane with capped sideways speed — a long,
       // gentle lane change instead of a darting swerve
