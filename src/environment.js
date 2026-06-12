@@ -16,10 +16,12 @@ export const SPEED_LEVELS = [
   { v: 36, bpm: 104, label: '150' },
 ];
 
-const DAY_LEN = 280;        // seconds for a full day/night cycle in auto mode
-const LAND_TRANS = 220;     // meters to crossfade between landscapes
+const DAY_LEN = 540;        // seconds for a full day/night cycle in auto mode
+const LAND_TRANS = 420;     // meters to crossfade between landscapes
 const LAND_AHEAD_AUTO = 900; // auto changes appear beyond the build horizon
 const LAND_AHEAD_MANUAL = 150;
+const WX_TAU_AUTO = 30;     // seconds for a weather crossfade when it drifts on its own
+const WX_TAU_MANUAL = 12;   // a touch quicker when picked on the radio, still gentle
 
 function smoothstep(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -88,11 +90,12 @@ export class Environment {
     this.wx = [1, 0, 0, 0, 0, 0];  // smoothed weather weights
     this.wxTargetIdx = 0;
     this.autoWeather = true;
-    this.wxTimer = 30 + Math.random() * 30;
+    this.wxTimer = 60 + Math.random() * 90;
+    this.wxTau = WX_TAU_AUTO;
 
     this.landKfs = [{ s: -1e9, idx: 0 }];
     this.autoLand = true;
-    this.nextLandS = 700 + Math.random() * 300;
+    this.nextLandS = 1400 + Math.random() * 600;
 
     this.speedIdx = 1;
     this.snowCover = 0;
@@ -125,14 +128,15 @@ export class Environment {
   }
 
   setWeather(idx) {
-    if (idx === 'auto') { this.autoWeather = true; this.wxTimer = 12 + Math.random() * 25; return; }
+    if (idx === 'auto') { this.autoWeather = true; this.wxTimer = 60 + Math.random() * 120; return; }
     this.autoWeather = false;
     this.wxTargetIdx = idx;
+    this.wxTau = WX_TAU_MANUAL;
   }
 
   // returns arc length where the new landscape begins (for chunk invalidation)
   setLandscape(idx) {
-    if (idx === 'auto') { this.autoLand = true; this.nextLandS = this.lastCarS + 500 + Math.random() * 400; return null; }
+    if (idx === 'auto') { this.autoLand = true; this.nextLandS = this.lastCarS + 1000 + Math.random() * 600; return null; }
     this.autoLand = false;
     const s = this.lastCarS + LAND_AHEAD_MANUAL;
     this._pushLandKf(s, idx);
@@ -182,7 +186,7 @@ export class Environment {
     if (this.timeTarget !== null) {
       let diff = this.timeTarget - this.t;
       diff -= Math.round(diff); // shortest way around the circle
-      const step = Math.sign(diff) * Math.min(Math.abs(diff), dt * 0.07);
+      const step = Math.sign(diff) * Math.min(Math.abs(diff), dt * 0.05);
       this.t += step;
       if (Math.abs(diff) < 0.002) { this.t = this.timeTarget; this.timeTarget = null; }
     } else if (this.autoTime) {
@@ -201,10 +205,11 @@ export class Environment {
           for (let i = 0; i < 6; i++) { acc += WX_PICK_WEIGHTS[i]; if (r < acc) { pick = i; break; } }
         }
         this.wxTargetIdx = pick;
-        this.wxTimer = 35 + Math.random() * 40;
+        this.wxTimer = 150 + Math.random() * 150; // a new sky every 2.5–5 minutes
+        this.wxTau = WX_TAU_AUTO;
       }
     }
-    const k = 1 - Math.exp(-dt / 5.0); // ~5 s weather crossfade
+    const k = 1 - Math.exp(-dt / this.wxTau); // long, patient crossfade
     let wsum = 0;
     for (let i = 0; i < 6; i++) {
       this.wx[i] += ((i === this.wxTargetIdx ? 1 : 0) - this.wx[i]) * k;
@@ -218,16 +223,16 @@ export class Environment {
       let pick = cur;
       while (pick === cur) pick = Math.floor(Math.random() * 5);
       this._pushLandKf(this.nextLandS, pick);
-      this.nextLandS += 750 + Math.random() * 450;
+      this.nextLandS += 1800 + Math.random() * 900; // a couple of minutes per country
     }
 
     // snow cover and road wetness creep in and fade slowly
     const snowAmt = this.wx[4];
     this.snowCover = THREE.MathUtils.clamp(
-      this.snowCover + (snowAmt > 0.45 ? dt * 0.045 : -dt * 0.03), 0, 1);
+      this.snowCover + (snowAmt > 0.45 ? dt * 0.028 : -dt * 0.018), 0, 1);
     const rainAmt = this.wx[3] + this.wx[5];
     this.wetness = THREE.MathUtils.clamp(
-      this.wetness + (rainAmt > 0.45 ? dt * 0.09 : -dt * 0.02), 0, 1);
+      this.wetness + (rainAmt > 0.45 ? dt * 0.05 : -dt * 0.015), 0, 1);
 
     // ---- blend time-of-day keyframes ----
     const seg = this.t * 4;

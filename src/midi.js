@@ -126,46 +126,54 @@ function pickLead(parsed) {
   return best ? best.notes : null;
 }
 
-// Build a beat-space loop ready for the music engine. Home key: F major
-// (tonic 5) for major songs, D minor (tonic 2) for minor ones — the relative
-// pair the generative bed breathes in.
-export function makeLoop(parsed, maxBeats = 96) {
+// Build a beat-space loop ready for the music engine, reshaped into a light
+// ambient cover: the melody is transposed into the bed's own diatonic world
+// (the chord sets all live in C major / A minor), stretched to half tempo so
+// phrases become long breaths, and thinned so only the singing notes remain.
+const STRETCH = 2;
+
+export function makeLoop(parsed, maxBeats = 72) {
   const lead = pickLead(parsed);
   if (!lead) return null;
   const key = estimateKey(lead);
-  let transpose = ((key.minor ? 2 : 5) - key.tonic + 6) % 12 - 6; // shortest way
+  const transpose = (((key.minor ? 9 : 0) - key.tonic + 6 + 24) % 12) - 6; // shortest way
 
   const div = parsed.div || 480;
   const t0 = Math.min(...lead.map((n) => n.start));
-  let notes = lead
+  const all = lead
     .map((n) => ({
-      beat: (n.start - t0) / div,
-      durBeats: Math.min(4, n.dur / div),
+      beat: ((n.start - t0) / div) * STRETCH,
+      durBeats: Math.min(8, (n.dur / div) * STRETCH),
       midi: n.midi + transpose,
       vel: n.vel,
     }))
-    .filter((n) => n.beat < maxBeats)
+    .filter((n) => n.beat < maxBeats * STRETCH)
     .sort((a, b) => a.beat - b.beat);
+  // prefer the singing notes; if the file plays everything quietly, relax
+  let notes = all.filter((n) => n.durBeats >= 0.3 && n.vel > 0.18);
+  if (notes.length < 16) notes = all.filter((n) => n.durBeats >= 0.15);
+  if (notes.length < 16) notes = all;
+  if (notes.length < 16) return null;
 
   // settle the melody into a singing register
   const avg = notes.reduce((a, n) => a + n.midi, 0) / notes.length;
   const octShift = Math.round((70 - avg) / 12) * 12;
   if (octShift) notes = notes.map((n) => ({ ...n, midi: n.midi + octShift }));
 
-  // bucket per integer beat, capped polyphony (keep the loudest)
+  // bucket per integer beat with low polyphony — an unhurried, airy line
   const buckets = new Map();
   for (const n of notes) {
     const b = Math.floor(n.beat);
     if (!buckets.has(b)) buckets.set(b, []);
     const arr = buckets.get(b);
     arr.push(n);
-    if (arr.length > 4) {
+    if (arr.length > 2) {
       arr.sort((x, y) => y.vel - x.vel);
-      arr.length = 4;
+      arr.length = 2;
     }
   }
   const last = notes[notes.length - 1];
-  const lengthBeats = Math.max(8, Math.ceil((last.beat + last.durBeats) / 4) * 4);
+  const lengthBeats = Math.max(16, Math.ceil((last.beat + last.durBeats) / 8) * 8);
   return { lengthBeats, buckets, minor: key.minor };
 }
 
