@@ -58,7 +58,8 @@ function buildCarMesh(paintHex) {
     tail.position.set(x, 0.6, -1.71);
     group.add(tail);
   }
-  for (const [mat, x] of [[sigLMat, -0.76], [sigRMat, 0.76]]) {
+  // local +Z forward, +Y up → the car's LEFT side is local +X
+  for (const [mat, x] of [[sigLMat, 0.76], [sigRMat, -0.76]]) {
     for (const z of [1.66, -1.66]) {
       const sig = new THREE.Mesh(new THREE.SphereGeometry(0.07, 6, 4), mat);
       sig.position.set(x, 0.56, z);
@@ -218,7 +219,13 @@ export class Traffic {
           car.blink = null;
         }
       }
-      car.lane += (car.targetLane - car.lane) * (1 - Math.exp(-dt * 1.6));
+      // ease toward the target lane with capped sideways speed — a long,
+      // gentle lane change instead of a darting swerve
+      let dl = (car.targetLane - car.lane) * (1 - Math.exp(-dt * 1.8));
+      const cap = dt * 1.5;
+      if (dl > cap) dl = cap;
+      else if (dl < -cap) dl = -cap;
+      car.lane += dl;
 
       // place on the road
       const f = this.world.getFrame(car.s);

@@ -10,6 +10,24 @@ import { Environment, SPEED_LEVELS } from './environment.js';
 import { makeWeatherFX } from './weather.js';
 import { makeRadio } from './radio.js';
 import { Traffic } from './traffic.js';
+import { parseMidi, makeLoop, midiTrackName } from './midi.js';
+
+// .mid files dropped into public/assets/midi/ (listed in manifest.json)
+// become extra stations on the track dial; absent manifest = generative only
+async function loadMidiTracks(music) {
+  try {
+    const res = await fetch('/assets/midi/manifest.json');
+    if (!res.ok) return;
+    const files = await res.json();
+    for (const f of files) {
+      try {
+        const ab = await (await fetch('/assets/midi/' + encodeURIComponent(f))).arrayBuffer();
+        const loop = makeLoop(parseMidi(ab));
+        if (loop) music.addMidiTrack(midiTrackName(f), loop);
+      } catch { /* skip unreadable file */ }
+    }
+  } catch { /* no midi shipped */ }
+}
 
 async function init() {
   const app = document.getElementById('app');
@@ -150,6 +168,7 @@ async function init() {
   document.getElementById('start').addEventListener('click', () => {
     music = new MusicEngine();
     music.start();
+    loadMidiTracks(music);
     driving = true;
     title.classList.add('hidden');
     hint.classList.add('show');
@@ -209,14 +228,15 @@ async function init() {
         overtake.t -= dt;
         if (overtake.t <= 0) overtake.phase = 'out';
       } else if (overtake.phase === 'out') {
-        lateralTarget = -2.1;
+        // glide out: cap the sideways speed so the car leans over gently
+        lateralTarget += THREE.MathUtils.clamp(-2.1 - lateralTarget, -dt * 1.3, dt * 1.3);
         if (!traffic.cars.includes(overtake.target) || carS > overtake.target.s + 13) {
           overtake.phase = 'back';
           overtake.blink = 'R';
           overtake.t = 1.0;
         }
       } else if (overtake.phase === 'back') {
-        lateralTarget = 2.1;
+        lateralTarget += THREE.MathUtils.clamp(2.1 - lateralTarget, -dt * 1.3, dt * 1.3);
         overtake.t -= dt;
         if (overtake.t <= 0 && Math.abs(lateral - 2.1) < 0.3) { overtake.phase = null; overtake.blink = null; }
       }

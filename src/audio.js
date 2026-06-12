@@ -53,13 +53,27 @@ const ARP_REST = [0.28, 0.45, 0.5, 0.2, 0.12, 0.42];
 // Tracks: same generative engine, different character. All meditative, but
 // each has its own tempo feel, lead voice, density and space. In auto mode
 // the track follows the mood of the drive and crossfades at chord boundaries.
+// Each track is its own little band: a lead voice (plucked synth, FM e-piano,
+// bells or breathy flute), optional e-piano comping and a whisper of
+// percussion, on top of the shared pad/bass/echo architecture.
 export const TRACKS = [
-  { name: 'GOLDEN HOUR', tempoMul: 1, pluckType: 'triangle', pluckOct: 12, padGain: 0.34, pluckGain: 0.5, bassGain: 0.4, filter: 1050, rest: 0, sparkle: 0, rev: 0.5, echo: 0.34 },
-  { name: 'NIGHT DRIVE', tempoMul: 0.85, pluckType: 'sine', pluckOct: 0, padGain: 0.3, pluckGain: 0.44, bassGain: 0.56, filter: 720, rest: 0.18, sparkle: -0.15, rev: 0.6, echo: 0.42 },
-  { name: 'MORNING BELLS', tempoMul: 1.1, pluckType: 'square', pluckOct: 12, padGain: 0.24, pluckGain: 0.3, bassGain: 0.34, filter: 1500, rest: -0.1, sparkle: 0.35, rev: 0.55, echo: 0.3 },
-  { name: 'RAINY GLASS', tempoMul: 0.9, pluckType: 'sine', pluckOct: 12, padGain: 0.3, pluckGain: 0.56, bassGain: 0.36, filter: 880, rest: 0.1, sparkle: 0.15, rev: 0.75, echo: 0.5 },
-  { name: 'OPEN PLAINS', tempoMul: 0.78, pluckType: 'triangle', pluckOct: 0, padGain: 0.42, pluckGain: 0.26, bassGain: 0.42, filter: 950, rest: 0.3, sparkle: 0.1, rev: 0.8, echo: 0.28 },
+  { name: 'GOLDEN HOUR', tempoMul: 1, lead: 'pluck', pluckType: 'triangle', pluckOct: 12, comp: false, perc: 1, padGain: 0.34, pluckGain: 0.5, bassGain: 0.4, filter: 1050, rest: 0, sparkle: 0, rev: 0.5, echo: 0.34 },
+  { name: 'NIGHT DRIVE', tempoMul: 0.85, lead: 'epiano', pluckType: 'sine', pluckOct: 0, comp: true, perc: 2, padGain: 0.28, pluckGain: 0.44, bassGain: 0.56, filter: 720, rest: 0.18, sparkle: -0.15, rev: 0.6, echo: 0.42 },
+  { name: 'MORNING BELLS', tempoMul: 1.1, lead: 'bell', pluckType: 'sine', pluckOct: 12, comp: false, perc: 0, padGain: 0.24, pluckGain: 0.3, bassGain: 0.34, filter: 1500, rest: -0.1, sparkle: 0.35, rev: 0.55, echo: 0.3 },
+  { name: 'RAINY GLASS', tempoMul: 0.9, lead: 'epiano', pluckType: 'sine', pluckOct: 12, comp: false, perc: 0, padGain: 0.3, pluckGain: 0.56, bassGain: 0.36, filter: 880, rest: 0.1, sparkle: 0.15, rev: 0.75, echo: 0.5 },
+  { name: 'OPEN PLAINS', tempoMul: 0.78, lead: 'flute', pluckType: 'triangle', pluckOct: 0, comp: false, perc: 0, padGain: 0.42, pluckGain: 0.26, bassGain: 0.42, filter: 950, rest: 0.3, sparkle: 0.1, rev: 0.8, echo: 0.28 },
 ];
+
+// preset used while a MIDI song is on the air: melody up front, the
+// generative bed reduced to a slow home-key drone
+const MIDI_PRESET = {
+  name: 'MIDI', tempoMul: 0.95, lead: 'epiano', pluckType: 'sine', pluckOct: 0, comp: false, perc: 0,
+  padGain: 0.24, pluckGain: 0.5, bassGain: 0.42, filter: 950, rest: 1, sparkle: 0.1, rev: 0.65, echo: 0.4,
+};
+
+// home chords for MIDI mode: Fmaj9 for major songs, Dm9 for minor ones
+const HOME_MAJOR = { bass: 41, notes: [53, 57, 60, 64, 67] };
+const HOME_MINOR = { bass: 38, notes: [53, 57, 60, 62, 65] };
 
 const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -139,6 +153,19 @@ export class MusicEngine {
     this.bassBus.gain.value = 0.4;
     this.bassBus.connect(this.master);
 
+    // lead bus: e-piano / bells / flute / MIDI melodies, with a wash of reverb
+    this.leadBus = ctx.createGain();
+    this.leadBus.gain.value = 0.5;
+    this.leadBus.connect(this.master);
+    const leadSend = ctx.createGain();
+    leadSend.gain.value = 0.45;
+    this.leadBus.connect(leadSend).connect(this.reverb);
+
+    // percussion bus, barely there
+    this.percBus = ctx.createGain();
+    this.percBus.gain.value = 0.6;
+    this.percBus.connect(this.master);
+
     this._atmosphere();
 
     this.setIdx = 0;
@@ -152,6 +179,8 @@ export class MusicEngine {
     this.track = TRACKS[0];
     this.pendingTrack = null;
     this.autoTrack = true;
+    this.midiTracks = [];
+    this.midiLoop = null;
 
     this.beatTimes = [];
     this.nextBeat = 0;
@@ -191,16 +220,27 @@ export class MusicEngine {
     }
   }
 
+  // Songs parsed from .mid files become extra stations on the track dial.
+  addMidiTrack(name, loop) {
+    if (loop) this.midiTracks.push({ name, loop });
+  }
+
+  get totalTracks() {
+    return TRACKS.length + this.midiTracks.length;
+  }
+
   // Manual track choice from the radio ('auto' hands it back to the drive).
   setTrack(idx) {
     if (idx === 'auto') { this.autoTrack = true; return; }
     this.autoTrack = false;
-    const n = ((idx % TRACKS.length) + TRACKS.length) % TRACKS.length;
+    const total = this.totalTracks;
+    const n = ((idx % total) + total) % total;
     if (n !== this.trackIdx) this.pendingTrack = n;
   }
 
   get displayTrack() {
-    return TRACKS[this.pendingTrack !== null ? this.pendingTrack : this.trackIdx].name;
+    const idx = this.pendingTrack !== null ? this.pendingTrack : this.trackIdx;
+    return idx < TRACKS.length ? TRACKS[idx].name : this.midiTracks[idx - TRACKS.length].name;
   }
 
   _setTempo(bpm) {
@@ -212,7 +252,13 @@ export class MusicEngine {
 
   _applyTrack(idx) {
     this.trackIdx = idx;
-    this.track = TRACKS[idx];
+    if (idx < TRACKS.length) {
+      this.track = TRACKS[idx];
+      this.midiLoop = null;
+    } else {
+      this.track = MIDI_PRESET;
+      this.midiLoop = this.midiTracks[idx - TRACKS.length].loop;
+    }
     const t = this.ctx.currentTime;
     this.padBus.gain.setTargetAtTime(this.track.padGain, t, 2.5);
     this.pluckBus.gain.setTargetAtTime(this.track.pluckGain, t, 2.5);
@@ -361,7 +407,10 @@ export class MusicEngine {
       }
     }
     const chordIdx = Math.floor(beat / BEATS_PER_CHORD) % 4;
-    const chord = CHORD_SETS[this.setIdx][chordIdx];
+    // in MIDI mode the bed settles on the song's home chord; otherwise walk the set
+    const chord = this.midiLoop
+      ? (this.midiLoop.minor ? HOME_MINOR : HOME_MAJOR)
+      : CHORD_SETS[this.setIdx][chordIdx];
 
     if (beatInChord === 0) {
       this._pad(chord.notes, t, BEATS_PER_CHORD * this.spb);
@@ -370,18 +419,152 @@ export class MusicEngine {
     }
     if (beatInChord % 4 === 0) this._bass(chord.bass, t, this.spb * 3.6);
 
+    // a whisper of percussion where the track calls for it
+    if (this.track.perc >= 1) {
+      for (let half = 0; half < 2; half++) {
+        if (Math.random() < 0.85) this._shaker(t + half * this.spb * 0.5, half ? 0.012 : 0.018);
+      }
+    }
+    if (this.track.perc >= 2 && beatInChord % 4 === 0) this._kick(t, 0.1);
+
+    // e-piano comping stabs late in the chord
+    if (this.track.comp && (beatInChord === 3 || beatInChord === 6) && Math.random() < 0.55) {
+      const stab = chord.notes.slice(1, 4);
+      stab.forEach((m, i) => this._epiano(midiHz(m), t + i * 0.012, 0.028, this.spb * 1.4));
+    }
+
+    if (this.midiLoop) {
+      // the song itself: schedule this beat's bucket of melody notes
+      const L = this.midiLoop;
+      const lb = beat % L.lengthBeats;
+      const bucket = L.buckets.get(lb);
+      if (bucket) {
+        for (const n of bucket) {
+          const when = t + (n.beat - lb) * this.spb;
+          this._lead(this.track.lead, midiHz(n.midi), when, 0.04 + n.vel * 0.05, Math.max(0.25, n.durBeats * this.spb));
+        }
+      }
+      return;
+    }
+
     // arpeggio: two eighth notes per beat with light swing and air
     const tones = chord.notes;
-    const rest = Math.min(0.7, Math.max(0.05, this.arpRest + this.track.rest + (this.moodRest || 0)));
+    const rest = Math.min(0.85, Math.max(0.05, this.arpRest + this.track.rest + (this.moodRest || 0)));
     for (let half = 0; half < 2; half++) {
       if (Math.random() < rest) continue;
       const idx = (beat * 2 + half * 3 + chordIdx) % tones.length;
       const oct = (beat + half) % 4 === 3 ? 12 : 0;
       const when = t + half * this.spb * 0.5 + (half ? this.spb * 0.04 : 0);
-      let vel = (0.05 + Math.random() * 0.05) * (1 - this.nightAmt * 0.3);
-      if (this.track.pluckType === 'square') vel *= 0.5; // square reads much louder
-      this._pluck(midiHz(tones[idx] + this.track.pluckOct + oct), when, vel);
+      const vel = (0.05 + Math.random() * 0.05) * (1 - this.nightAmt * 0.3);
+      this._lead(this.track.lead, midiHz(tones[idx] + this.track.pluckOct + oct), when, vel, this.spb * 1.2);
     }
+  }
+
+  // lead voice dispatch — every track sings with its own instrument
+  _lead(kind, freq, t, vel, dur) {
+    if (kind === 'epiano') this._epiano(freq, t, vel, dur);
+    else if (kind === 'bell') this._bell(freq, t, vel);
+    else if (kind === 'flute') this._flute(freq, t, vel, Math.max(dur, this.spb * 1.6));
+    else this._pluck(freq, t, vel);
+  }
+
+  // FM e-piano: sine carrier, 2:1 modulator whose index decays — soft tine
+  _epiano(freq, t, vel, dur = 0.9) {
+    const ctx = this.ctx;
+    const carrier = ctx.createOscillator();
+    carrier.type = 'sine';
+    carrier.frequency.value = freq;
+    const mod = ctx.createOscillator();
+    mod.type = 'sine';
+    mod.frequency.value = freq * 2;
+    const modGain = ctx.createGain();
+    modGain.gain.setValueAtTime(freq * 1.6, t);
+    modGain.gain.setTargetAtTime(freq * 0.06, t + 0.01, 0.18);
+    mod.connect(modGain).connect(carrier.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vel, t + 0.008);
+    g.gain.setTargetAtTime(vel * 0.35, t + 0.06, 0.3);
+    g.gain.setTargetAtTime(0, t + dur, 0.18);
+    carrier.connect(g).connect(this.leadBus);
+    carrier.start(t);
+    mod.start(t);
+    carrier.stop(t + dur + 1.2);
+    mod.stop(t + dur + 1.2);
+  }
+
+  // small glass bell: fundamental plus inharmonic partials, long shimmer
+  _bell(freq, t, vel) {
+    const ctx = this.ctx;
+    for (const [ratio, amp, dec] of [[1, 1, 1.4], [2.76, 0.4, 0.6], [5.4, 0.18, 0.3]]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq * ratio;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vel * amp * 0.8, t + 0.006);
+      g.gain.setTargetAtTime(0, t + 0.02, dec);
+      osc.connect(g).connect(this.leadBus);
+      osc.start(t);
+      osc.stop(t + dec * 6);
+    }
+  }
+
+  // breathy flute: filtered triangle with slow attack and gentle vibrato
+  _flute(freq, t, vel, dur) {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 5.2;
+    const vibGain = ctx.createGain();
+    vibGain.gain.value = freq * 0.006;
+    vib.connect(vibGain).connect(osc.frequency);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 2000;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vel * 0.9, t + 0.09);
+    g.gain.setValueAtTime(vel * 0.9, t + Math.max(0.1, dur - 0.1));
+    g.gain.setTargetAtTime(0, t + dur, 0.12);
+    osc.connect(lp).connect(g).connect(this.leadBus);
+    osc.start(t);
+    vib.start(t);
+    osc.stop(t + dur + 1);
+    vib.stop(t + dur + 1);
+  }
+
+  // soft felt kick
+  _kick(t, vel) {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(105, t);
+    osc.frequency.exponentialRampToValueAtTime(42, t + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vel, t);
+    g.gain.setTargetAtTime(0, t + 0.02, 0.07);
+    osc.connect(g).connect(this.percBus);
+    osc.start(t);
+    osc.stop(t + 0.4);
+  }
+
+  // tiny shaker tick
+  _shaker(t, vel) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource();
+    src.buffer = this._staticNoise(0.06);
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 6500;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vel, t);
+    g.gain.setTargetAtTime(0, t + 0.008, 0.022);
+    src.connect(hp).connect(g).connect(this.percBus);
+    src.start(t);
+    src.stop(t + 0.09);
   }
 
   _pad(notes, t, dur) {

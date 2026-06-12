@@ -52,11 +52,12 @@ export function makeCar() {
   }
 
   // turn signals for the auto-overtake maneuver
+  // (with local +Z forward and +Y up, the car's LEFT side is local +X)
   const sigOff = new THREE.Color(0x5a3a10);
   const sigOn = new THREE.Color(0xffb43a);
   const sigLMat = new THREE.MeshBasicMaterial({ color: sigOff });
   const sigRMat = new THREE.MeshBasicMaterial({ color: sigOff });
-  for (const [mat, x] of [[sigLMat, -0.8], [sigRMat, 0.8]]) {
+  for (const [mat, x] of [[sigLMat, 0.8], [sigRMat, -0.8]]) {
     for (const z of [1.76, -1.76]) {
       const sig = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 4), mat);
       sig.position.set(x, 0.58, z);
