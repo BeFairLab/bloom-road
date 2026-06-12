@@ -68,9 +68,11 @@ const TIME_KEYS = [
 }));
 
 // per-weather: fog range, sky dimming, light multiplier, gray haze tint
+// fog "far" stays inside the chunk build horizon (~820 m) — anything beyond
+// it would reveal the world's open edge hanging in the sky
 const WX = [
-  { near: 130, far: 1050, dim: 0.0, light: 1.0, gray: 0.0, tint: '#ffffff', wind: 0.0 },
-  { near: 115, far: 880, dim: 0.16, light: 0.85, gray: 0.12, tint: '#aeb4ba', wind: 0.1 },
+  { near: 130, far: 880, dim: 0.0, light: 1.0, gray: 0.0, tint: '#ffffff', wind: 0.0 },
+  { near: 115, far: 800, dim: 0.16, light: 0.85, gray: 0.12, tint: '#aeb4ba', wind: 0.1 },
   { near: 16, far: 230, dim: 0.30, light: 0.70, gray: 0.55, tint: '#aeb4ba', wind: 0.15 },
   { near: 85, far: 600, dim: 0.34, light: 0.60, gray: 0.30, tint: '#8e96a4', wind: 0.5 },
   { near: 55, far: 460, dim: 0.22, light: 0.75, gray: 0.55, tint: '#c9cdd6', wind: 0.35 },

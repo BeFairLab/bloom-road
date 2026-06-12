@@ -33,7 +33,8 @@ async function init() {
   const app = document.getElementById('app');
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // phones get a slightly lower cap — bloom at DPR 2+ is too heavy for them
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, window.innerWidth < 700 ? 1.75 : 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
@@ -173,6 +174,8 @@ async function init() {
     title.classList.add('hidden');
     hint.classList.add('show');
     radio.show();
+    // on a phone the radio starts tucked away — the tab brings it up
+    if (window.matchMedia('(max-width: 640px)').matches) radio.toggle();
     setTimeout(() => hint.classList.remove('show'), 9000);
   });
 

@@ -164,7 +164,8 @@ export function makeClouds(cloudTexture) {
     const sprite = new THREE.Sprite(mat);
     const a = (i / 14) * Math.PI * 2 + Math.sin(i * 12.9) * 0.4;
     const r = 900 + (i % 4) * 260;
-    sprite.position.set(Math.cos(a) * r, 150 + ((i * 73) % 160), Math.sin(a) * r);
+    // high enough that highland ridges never slice a sprite into a wedge
+    sprite.position.set(Math.cos(a) * r, 250 + ((i * 73) % 170), Math.sin(a) * r);
     const s = 220 + ((i * 47) % 180);
     sprite.scale.set(s, s * 0.5, 1);
     group.add(sprite);

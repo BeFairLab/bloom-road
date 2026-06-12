@@ -266,7 +266,9 @@ export class World {
       this.lampGlowGeo, this.puddleGeo, this.driftGeo,
     ]);
 
-    this.groundOffsets = [4.6, 6, 9, 14, 22, 34, 52, 80, 120, 170, 230, 300];
+    // the last column is a skirt: it folds the terrain silhouette down below
+    // the horizon so the open mesh edge never hangs in the sky as a cliff
+    this.groundOffsets = [4.6, 6, 9, 14, 22, 34, 52, 80, 120, 170, 230, 300, 380];
   }
 
   // ---- road shape, gated by landscape: downtown straightens and flattens ----
@@ -480,8 +482,10 @@ export class World {
     const roadGeo = this._ribbon(i0, i1, [-ROAD_HALF, 0, ROAD_HALF], (s) => this.roadYAt(s) + 0.02, roadColor, false);
     group.add(new THREE.Mesh(roadGeo, this.roadMat));
 
-    // ground on both sides (faceted for the low-poly look)
-    const hFn = (s, d) => this.terrainH(s, d, this.env.weightsAt(s));
+    // ground on both sides (faceted for the low-poly look); beyond 320 m the
+    // skirt drops sharply so the outer edge hides below the horizon line
+    const hFn = (s, d) =>
+      Math.abs(d) > 320 ? this.roadYAt(s) - 60 : this.terrainH(s, d, this.env.weightsAt(s));
     const cFn = (s, d, h) => this.groundColor(s, d, h, this.env.weightsAt(s));
     for (const sign of [-1, 1]) {
       const offsets = this.groundOffsets.map((d) => d * sign).sort((a, b) => a - b);
@@ -677,7 +681,8 @@ export class World {
         const d = side * (14 + Math.pow(r3, 1.4) * 62);
         const f = this.getFrame(s);
         const h = 12 + Math.pow(r4, 1.5) * 80;
-        dummy.position.set(f.x + f.rightX * d, this.terrainH(s, d, wAt(s)) - 0.4, f.z + f.rightZ * d);
+        // sunk a couple of meters so corners never float off sloped ground
+        dummy.position.set(f.x + f.rightX * d, this.terrainH(s, d, wAt(s)) - 2.2, f.z + f.rightZ * d);
         dummy.rotation.set(0, f.theta + (r4 - 0.5) * 0.15, 0);
         dummy.scale.set(6 + r2 * 8, h, 6 + r3 * 8);
         dummy.updateMatrix();

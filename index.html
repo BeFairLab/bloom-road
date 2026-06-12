@@ -13,8 +13,8 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { height: 100%; overflow: hidden; background: #2b1d18; }
-    #app { position: fixed; inset: 0; }
-    canvas { display: block; }
+    #app { position: fixed; inset: 0; touch-action: none; }
+    canvas { display: block; touch-action: none; }
 
     /* ---- title screen ---- */
     #title {
@@ -80,8 +80,10 @@
 
     /* ---- the dashboard radio ---- */
     #radio {
+      --rscale: 1;
       position: fixed; left: 50%; bottom: 14px; z-index: 6;
-      transform: translateX(-50%);
+      transform: translateX(-50%) scale(var(--rscale));
+      transform-origin: bottom center;
       font-family: 'Space Grotesk', system-ui, sans-serif;
       user-select: none; -webkit-user-select: none;
       opacity: 0; pointer-events: none;
@@ -89,7 +91,7 @@
     }
     #radio.show { opacity: 1; pointer-events: auto; }
     /* the whole unit slides down behind the screen edge; the tab rides along */
-    #radio.closed { transform: translateX(-50%) translateY(calc(100% + 14px)); }
+    #radio.closed { transform: translateX(-50%) scale(var(--rscale)) translateY(calc(100% + 14px)); }
     #r-tab {
       position: absolute; top: -22px; right: 14px; z-index: -1;
       padding: 4px 14px 10px; border: none; border-radius: 8px 8px 0 0; cursor: pointer;
@@ -189,10 +191,13 @@
     }
     .r-auto.on { color: #8ce08a !important; text-shadow: 0 0 6px rgba(120, 230, 110, .9) !important; }
 
-    @media (max-width: 720px) {
-      #radio { transform: translateX(-50%) scale(.74); transform-origin: bottom center; }
-      #radio.closed { transform: translateX(-50%) scale(.74) translateY(calc(100% + 14px)); }
+    @media (max-width: 720px) { #radio { --rscale: .74; } }
+    @media (max-width: 560px) {
+      #r-tab { padding: 8px 22px 14px; font-size: 11px; }
     }
+    @media (max-width: 460px) { #radio { --rscale: .66; } }
+    @media (max-width: 400px) { #radio { --rscale: .62; } }
+    @media (max-width: 360px) { #radio { --rscale: .56; } }
   </style>
 </head>
 <body>
