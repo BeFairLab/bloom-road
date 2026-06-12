@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Bloom Road — a meditative drive</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Space+Grotesk:wght@400;500&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; background: #2b1d18; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+
+    /* ---- title screen ---- */
+    #title {
+      position: fixed; inset: 0; z-index: 10;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px; text-align: center;
+      background:
+        radial-gradient(120% 90% at 50% 12%, #ffe2b3 0%, #f8b876 34%, #e8825a 62%, #b9543f 100%);
+      transition: opacity 1.8s ease;
+    }
+    #title.hidden { opacity: 0; pointer-events: none; }
+    #title::after {
+      /* film grain on the poster */
+      content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .35;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='0.18'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+      mix-blend-mode: overlay;
+    }
+    #emblem {
+      width: min(280px, 52vw); height: auto;
+      filter: drop-shadow(0 14px 30px rgba(90, 35, 20, .35));
+      animation: float 7s ease-in-out infinite;
+    }
+    @keyframes float { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-10px) } }
+    #title h1 {
+      font-family: 'Fraunces', Georgia, serif; font-weight: 650;
+      font-size: clamp(44px, 9vw, 96px); letter-spacing: .05em;
+      color: #57281b; text-shadow: 0 2px 0 rgba(255, 240, 210, .45);
+    }
+    #title .sub {
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      font-size: clamp(11px, 1.6vw, 15px); letter-spacing: .42em; text-transform: uppercase;
+      color: rgba(87, 40, 27, .72); margin-top: -8px;
+    }
+    #start {
+      margin-top: 22px; padding: 15px 44px; border: none; border-radius: 999px; cursor: pointer;
+      font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 15px; letter-spacing: .22em;
+      text-transform: uppercase; color: #ffe9c8; background: #6c3324;
+      box-shadow: 0 10px 26px rgba(70, 25, 14, .42), inset 0 1px 0 rgba(255, 220, 180, .25);
+      transition: transform .25s ease, box-shadow .25s ease, background .25s ease;
+    }
+    #start:hover { transform: translateY(-2px); background: #7d3c2a; box-shadow: 0 16px 34px rgba(70,25,14,.5), inset 0 1px 0 rgba(255,220,180,.3); }
+    #start:active { transform: translateY(0); }
+    #title .foot {
+      position: absolute; bottom: 26px; width: 100%;
+      font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 11px; letter-spacing: .28em;
+      text-transform: uppercase; color: rgba(87, 40, 27, .5);
+    }
+    #title .foot a {
+      color: rgba(87, 40, 27, .75); text-decoration: none;
+      border-bottom: 1px solid rgba(87, 40, 27, .35);
+    }
+    #title .foot a:hover { color: #57281b; border-bottom-color: rgba(87, 40, 27, .7); }
+
+    /* ---- in-drive HUD ---- */
+    #hint {
+      position: fixed; bottom: 28px; left: 0; width: 100%; z-index: 5; text-align: center;
+      font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 12px; letter-spacing: .3em;
+      text-transform: uppercase; color: rgba(255, 235, 205, .85);
+      text-shadow: 0 1px 8px rgba(80, 30, 10, .6);
+      opacity: 0; transition: opacity 2s ease; pointer-events: none;
+    }
+    #hint.show { opacity: 1; }
+
+    /* ---- the dashboard radio ---- */
+    #radio {
+      position: fixed; left: 50%; bottom: 14px; z-index: 6;
+      transform: translateX(-50%);
+      font-family: 'Space Grotesk', system-ui, sans-serif;
+      user-select: none; -webkit-user-select: none;
+      opacity: 0; pointer-events: none;
+      transition: opacity 1.2s ease, transform .55s cubic-bezier(.4, 0, .25, 1);
+    }
+    #radio.show { opacity: 1; pointer-events: auto; }
+    /* the whole unit slides down behind the screen edge; the tab rides along */
+    #radio.closed { transform: translateX(-50%) translateY(calc(100% + 14px)); }
+    #r-tab {
+      position: absolute; top: -22px; right: 14px; z-index: -1;
+      padding: 4px 14px 10px; border: none; border-radius: 8px 8px 0 0; cursor: pointer;
+      font-family: inherit; font-size: 9px; letter-spacing: .3em; color: #d8c2a0;
+      background: linear-gradient(#4a2e1c, #382014);
+      box-shadow: 0 -4px 12px rgba(20, 8, 4, .4);
+    }
+    .r-face {
+      display: flex; gap: 12px; align-items: stretch;
+      padding: 12px 14px; border-radius: 12px;
+      background:
+        repeating-linear-gradient(92deg, rgba(255, 205, 150, .045) 0 7px, rgba(30, 10, 5, .05) 7px 11px),
+        linear-gradient(#5c3a24, #3a2113 70%, #2c1810);
+      border: 1px solid #1f100a;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 215, 170, .22),
+        inset 0 -2px 6px rgba(0, 0, 0, .35),
+        0 14px 34px rgba(15, 6, 3, .6);
+    }
+    .r-col { display: flex; flex-direction: column; justify-content: space-between; }
+    .r-left { align-items: center; gap: 8px; justify-content: center; }
+
+    .r-knob { display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
+    .r-knob-cap {
+      width: 42px; height: 42px; border-radius: 50%; position: relative;
+      background:
+        radial-gradient(circle at 32% 28%, #e8e2d4, #9a9284 45%, #4e483e 100%);
+      box-shadow: 0 3px 8px rgba(10, 4, 2, .55), inset 0 1px 1px rgba(255, 255, 255, .5);
+      transition: transform .25s ease;
+    }
+    .r-knob-cap i {
+      position: absolute; left: 50%; top: 3px; width: 3px; height: 13px;
+      margin-left: -1.5px; border-radius: 2px; background: #2c241c;
+    }
+    .r-knob span { font-size: 8px; letter-spacing: .25em; color: #cdb392; }
+
+    .r-mid { width: 320px; gap: 6px; }
+    .r-lcd {
+      border-radius: 6px; padding: 6px 10px 5px;
+      background: linear-gradient(#1d1006, #2a1504);
+      border: 1px solid #120a04;
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, .7);
+      color: #ffb45e; font-family: 'Space Grotesk', monospace;
+    }
+    .r-lcd-top { display: flex; align-items: baseline; gap: 6px; }
+    .r-lcd-top b { font-size: 19px; font-weight: 500; letter-spacing: .04em; text-shadow: 0 0 9px rgba(255, 160, 60, .8); }
+    .r-lcd-top u { font-size: 9px; text-decoration: none; opacity: .7; }
+    .r-lcd-top em {
+      font-style: normal; font-size: 12px; letter-spacing: .22em; margin-left: auto;
+      text-shadow: 0 0 8px rgba(255, 160, 60, .7);
+    }
+    .r-eq { display: flex; align-items: flex-end; gap: 2px; height: 15px; margin-left: 8px; }
+    .r-eq i { display: block; width: 3px; height: 4px; background: #ffb45e; box-shadow: 0 0 5px rgba(255, 160, 60, .8); }
+    .r-lcd-sub { font-size: 8.5px; letter-spacing: .24em; opacity: .75; margin-top: 2px; white-space: nowrap; }
+    .r-lcd-track { color: #8ce08a; opacity: .85; text-shadow: 0 0 6px rgba(120, 230, 110, .5); }
+
+    .r-tuner {
+      position: relative; height: 16px; border-radius: 4px; cursor: pointer;
+      background:
+        repeating-linear-gradient(90deg, rgba(255, 215, 170, .35) 0 1px, transparent 1px 10.6%),
+        repeating-linear-gradient(90deg, rgba(255, 215, 170, .18) 0 1px, transparent 1px 2.65%),
+        linear-gradient(#241405, #170d04);
+      border: 1px solid #120a04;
+      box-shadow: inset 0 2px 6px rgba(0, 0, 0, .65);
+    }
+    .r-needle {
+      position: absolute; top: 1px; bottom: 1px; left: 8%; width: 2px; margin-left: -1px;
+      background: #ff5638; box-shadow: 0 0 6px rgba(255, 86, 56, .9);
+      transition: left 1.1s cubic-bezier(.4, 0, .3, 1);
+    }
+    .r-stations { display: flex; gap: 4px; }
+    .r-st {
+      flex: 1; padding: 4px 2px 3px; border: 1px solid #1c0f08; border-radius: 4px; cursor: pointer;
+      font-family: inherit; font-size: 7.5px; letter-spacing: .12em; color: #c9b294;
+      background: linear-gradient(#462b1a, #2e1a0e);
+      box-shadow: inset 0 1px 0 rgba(255, 215, 170, .14), 0 2px 4px rgba(15, 6, 3, .4);
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+    }
+    .r-st b { font-size: 8.5px; font-weight: 500; color: #e8cfa6; }
+    .r-st.on { color: #ffb45e; border-color: #6b3c14; box-shadow: inset 0 1px 5px rgba(0, 0, 0, .5), 0 0 9px rgba(255, 150, 50, .25); }
+    .r-st.on b { color: #ffb45e; text-shadow: 0 0 7px rgba(255, 160, 60, .8); }
+
+    .r-right { width: 158px; gap: 6px; justify-content: center; }
+    .r-grp label { display: block; font-size: 7.5px; letter-spacing: .3em; color: #a8895f; margin: 0 0 3px 2px; }
+    .r-btns { display: flex; gap: 3px; }
+    .r-btns button {
+      flex: 1; padding: 5px 0 4px; border: 1px solid #16161a; border-radius: 3px; cursor: pointer;
+      font-family: inherit; font-size: 7px; letter-spacing: .08em; color: #b8b0a2;
+      background: linear-gradient(#3c3c40, #202024);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 2px 4px rgba(10, 5, 3, .5);
+    }
+    .r-btns button:active { transform: translateY(1px); }
+    .r-btns button.on {
+      color: #ffb45e; border-color: #5c3920;
+      box-shadow: inset 0 1px 6px rgba(0, 0, 0, .6), 0 0 8px rgba(255, 150, 50, .3);
+      text-shadow: 0 0 6px rgba(255, 160, 60, .9);
+    }
+    .r-auto.on { color: #8ce08a !important; text-shadow: 0 0 6px rgba(120, 230, 110, .9) !important; }
+
+    @media (max-width: 720px) {
+      #radio { transform: translateX(-50%) scale(.74); transform-origin: bottom center; }
+      #radio.closed { transform: translateX(-50%) scale(.74) translateY(calc(100% + 14px)); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="hint">&larr; &rarr; drift across the road &nbsp;&middot;&nbsp; m — mute &nbsp;&middot;&nbsp; r — radio</div>
+
+  <div id="radio">
+    <button id="r-tab" title="R — toggle radio">RADIO</button>
+    <div class="r-face">
+      <div class="r-col r-left">
+        <div class="r-knob" id="r-vol" title="volume — drag or scroll, click to mute">
+          <div class="r-knob-cap"><i></i></div><span>VOL</span>
+        </div>
+        <div class="r-knob" id="r-spd" title="cruise speed — click or scroll">
+          <div class="r-knob-cap"><i></i></div><span>CRUISE</span>
+        </div>
+      </div>
+      <div class="r-col r-mid">
+        <div class="r-lcd">
+          <div class="r-lcd-top">
+            <b id="r-freq">88.1</b><u>FM</u>
+            <em id="r-station">FIELDS</em>
+            <span class="r-eq"><i></i><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="r-lcd-sub" id="r-sub">DUSK · CLEAR · CRUISE 70</div>
+          <div class="r-lcd-sub r-lcd-track" id="r-track">♪ GOLDEN HOUR</div>
+        </div>
+        <div class="r-tuner" id="r-tuner">
+          <div class="r-needle" id="r-needle"></div>
+        </div>
+        <div class="r-stations" id="r-stations"></div>
+      </div>
+      <div class="r-col r-right">
+        <div class="r-grp">
+          <label>TIME</label>
+          <div class="r-btns" id="r-time"></div>
+        </div>
+        <div class="r-grp">
+          <label>WEATHER</label>
+          <div class="r-btns" id="r-wx"></div>
+        </div>
+        <div class="r-grp">
+          <label>TRACK</label>
+          <div class="r-btns" id="r-trk"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="title">
+    <img id="emblem" src="/assets/emblem.png" alt="" onerror="this.style.display='none'" />
+    <h1>BLOOM&nbsp;ROAD</h1>
+    <div class="sub">a meditative drive through the golden hour</div>
+    <button id="start">Begin the drive</button>
+    <div class="foot">headphones recommended &nbsp;&middot;&nbsp; crafted at <a href="https://befairlab.com/" target="_blank" rel="noopener">befairlab.com</a></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
